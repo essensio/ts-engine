@@ -13,6 +13,7 @@
 //   * Незакрытая строка/регэксп → LexError.
 //   * 'r' порождает REGEX только при прилегании к '"' (r"…"); иначе это имя.
 //   * '.' между цифрами — часть числа (3.2); иначе DOT (a.x).
+//   * 'e'/'E' после числа с цифрами экспоненты — часть числа (1e3, 1.5e-2); иначе имя.
 //   * '_' — отдельный токен UNDERSCORE (имена начинаются с буквы).
 //   * Двусимвольные '!=', '<=', '>=' распознаются раньше односимвольных.
 
@@ -20,7 +21,7 @@ export type Token = { kind: string; value: string; pos: number };
 
 export class LexError extends Error {}
 
-const KEYWORDS: Record<string, string> = { true: "TRUE", false: "FALSE", and: "AND", or: "OR", not: "NOT" };
+const KEYWORDS: Record<string, string> = { true: "TRUE", false: "FALSE", null: "NULL", and: "AND", or: "OR", not: "NOT" };
 const TWO: Record<string, string> = { "!=": "NE", "<=": "LE", ">=": "GE" };
 const ONE: Record<string, string> = {
   "=": "EQ", "<": "LT", ">": "GT", "~": "TILDE",
@@ -79,6 +80,15 @@ export function tokenize(src: string): Token[] {
       if (j + 1 < n && src[j] === "." && DIGIT.test(src[j + 1])) {
         j += 1;
         while (j < n && DIGIT.test(src[j])) j += 1;
+      }
+      if (j < n && (src[j] === "e" || src[j] === "E")) {
+        let k = j + 1;
+        if (k < n && (src[k] === "+" || src[k] === "-")) k += 1;
+        if (k < n && DIGIT.test(src[k])) {
+          k += 1;
+          while (k < n && DIGIT.test(src[k])) k += 1;
+          j = k;
+        }
       }
       toks.push({ kind: "NUMBER", value: src.slice(i, j), pos: i });
       i = j;

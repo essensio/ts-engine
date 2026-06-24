@@ -30,6 +30,7 @@ export const Decl = (name: string, type: TypeExpr): Decl => ({ kind: "Decl", nam
 export type Num = { kind: "Num"; text: string };
 export type Bool = { kind: "Bool"; value: boolean };
 export type Str = { kind: "Str"; value: string };
+export type Null = { kind: "Null" };
 export type Regex = { kind: "Regex"; pattern: string };
 export type TupleLit = { kind: "TupleLit"; fields: Array<[string, Expr]> };
 export type RelLit = { kind: "RelLit"; elems: Expr[] };
@@ -45,13 +46,14 @@ export type BinOp = { kind: "BinOp"; op: string; left: Expr; right: Expr };
 export type UnOp = { kind: "UnOp"; op: string; operand: Expr };
 
 export type Expr =
-  | Num | Bool | Str | Regex | TupleLit | RelLit
+  | Num | Bool | Str | Null | Regex | TupleLit | RelLit
   | ScalarSel | RefSel | TupleSel | RelSel
   | Underscore | Ref | Member | Apply | BinOp | UnOp;
 
 export const Num = (text: string): Num => ({ kind: "Num", text });
 export const Bool = (value: boolean): Bool => ({ kind: "Bool", value });
 export const Str = (value: string): Str => ({ kind: "Str", value });
+export const Null = (): Null => ({ kind: "Null" });
 export const Regex = (pattern: string): Regex => ({ kind: "Regex", pattern });
 export const TupleLit = (fields: Array<[string, Expr]>): TupleLit => ({ kind: "TupleLit", fields });
 export const RelLit = (elems: Expr[]): RelLit => ({ kind: "RelLit", elems });

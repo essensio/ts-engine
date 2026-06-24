@@ -3,7 +3,7 @@
 // ЧЕТЫРЕ ВХОДА (по нонтерминалу-корню):
 //   parseDeclaration(src) -> Decl       (объявление = имя "=" тип)
 //   parseType(src)        -> TypeExpr   (тип)
-//   parseLiteral(src)     -> Expr       (литерал = голый | селектор)
+//   parseLiteral(src)     -> Expr       (литерал = значение | селектор)
 //   parseExpression(src)  -> Expr       (выражение)
 //
 // ИНВАРИАНТЫ
@@ -11,11 +11,11 @@
 //     sum < product < unary < postfix < atom.
 //   * Сравнение НЕ цепляется: comparison берёт максимум один оператор сравнения.
 //   * Каждый вход требует EOF в конце.
-//   * Отношение — постфикс: T[] (рел-тип). Тип поля — рел-тип (без верхнего "|");
+//   * Отношение — постфикс: T[] (отношение-тип). Тип поля — отношение-тип (без верхнего "|");
 //     уточнение поля только в скобках.
 //
 // КРАЕВЫЕ → ParseError: неполный вход, лишний хвост, цепочка сравнений,
-//   "|" в типе поля без скобок, ссылка "#" не на имя, голое имя как литерал.
+//   "|" в типе поля без скобок, ссылка "#" не на имя, имя как литерал.
 
 import { tokenize, type Token } from "./lexer";
 import * as N from "./nodes";
@@ -60,7 +60,7 @@ class Parser {
     return t;
   }
 
-  // рел-тип = атом-тип , { "[" "]" }  — отношение постфиксом: T[], T[][]
+  // отношение-тип = атом-тип , { "[" "]" }  — отношение постфиксом: T[], T[][]
   private relType(): N.TypeExpr {
     let t = this.atomType();
     while (this.at("LBRACK")) { this.eat("LBRACK"); this.eat("RBRACK"); t = N.TRel(t); }
@@ -154,7 +154,7 @@ class Parser {
       this.next();
       const target = this.eat("NAME").value;
       this.eat("LPAREN");
-      const arg = this.bare();
+      const arg = this.value();
       this.eat("RPAREN");
       return N.RefSel(target, arg);
     }
@@ -175,7 +175,7 @@ class Parser {
       if (this.at("LBRACK")) return N.RelSel(name, this.relValue());
       return N.Ref(name);
     }
-    return this.bare();
+    return this.value();
   }
 
   // ── литералы ──
@@ -184,28 +184,29 @@ class Parser {
     if (t.kind === "NAME") {
       this.next();
       const name = t.value;
-      if (this.at("LPAREN")) { this.next(); const arg = this.bare(); this.eat("RPAREN"); return N.ScalarSel(name, arg); }
+      if (this.at("LPAREN")) { this.next(); const arg = this.value(); this.eat("RPAREN"); return N.ScalarSel(name, arg); }
       if (this.at("LBRACE")) return N.TupleSel(name, this.tupleValue());
       if (this.at("LBRACK")) return N.RelSel(name, this.relValue());
-      throw new ParseError(`голое имя ${JSON.stringify(name)} не литерал на ${t.pos}`);
+      throw new ParseError(`имя ${JSON.stringify(name)} не литерал на ${t.pos}`);
     }
     if (t.kind === "HASH") {
       this.next();
       const target = this.eat("NAME").value;
       this.eat("LPAREN");
-      const arg = this.bare();
+      const arg = this.value();
       this.eat("RPAREN");
       return N.RefSel(target, arg);
     }
-    return this.bare();
+    return this.value();
   }
 
-  private bare(): N.Expr {
+  private value(): N.Expr {
     const t = this.peek();
     if (t.kind === "MINUS") { this.next(); const num = this.eat("NUMBER"); return N.Num("-" + num.value); }
     if (t.kind === "NUMBER") { this.next(); return N.Num(t.value); }
     if (t.kind === "TRUE") { this.next(); return N.Bool(true); }
     if (t.kind === "FALSE") { this.next(); return N.Bool(false); }
+    if (t.kind === "NULL") { this.next(); return N.Null(); }
     if (t.kind === "STRING") { this.next(); return N.Str(t.value); }
     if (t.kind === "REGEX") { this.next(); return N.Regex(t.value); }
     if (t.kind === "LBRACE") return this.tupleValue();
@@ -215,24 +216,29 @@ class Parser {
 
   private tupleValue(): N.TupleLit {
     this.eat("LBRACE");
-    const fields: Array<[string, N.Expr]> = [this.pair()];
-    while (this.at("COMMA")) { this.next(); fields.push(this.pair()); }
+    const fields: Array<[string, N.Expr]> = [];
+    if (!this.at("RBRACE")) {
+      fields.push(this.pair());
+      while (this.at("COMMA")) { this.next(); fields.push(this.pair()); }
+    }
     this.eat("RBRACE");
     return N.TupleLit(fields);
   }
 
   private pair(): [string, N.Expr] {
-    const name = this.eat("NAME").value;
+    const k = this.peek();
+    if (k.kind !== "NAME" && k.kind !== "STRING") throw new ParseError(`ожидался ключ (имя или строка), получено ${k.kind} на ${k.pos}`);
+    this.next();
     this.eat("COLON");
-    return [name, this.bare()];
+    return [k.value, this.value()];
   }
 
   private relValue(): N.RelLit {
     this.eat("LBRACK");
     const elems: N.Expr[] = [];
     if (!this.at("RBRACK")) {
-      elems.push(this.bare());
-      while (this.at("COMMA")) { this.next(); elems.push(this.bare()); }
+      elems.push(this.value());
+      while (this.at("COMMA")) { this.next(); elems.push(this.value()); }
     }
     this.eat("RBRACK");
     return N.RelLit(elems);

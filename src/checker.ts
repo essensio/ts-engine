@@ -34,6 +34,7 @@ const SYSTEM = ["Число", "Строка", "Булево", "Дата", "Вр�
 const NUM = scalar("Число");
 const STR = scalar("Строка");
 const BOOL = scalar("Булево");
+const NOTHING = scalar("Ничто");
 const ORDERED = new Set(["Число", "Строка", "Дата", "Время"]);
 
 export class TypeErr extends Error {}
@@ -134,6 +135,7 @@ export class Env {
       case "Num": return NUM;
       case "Bool": return BOOL;
       case "Str": return STR;
+      case "Null": return NOTHING;
       case "Regex": return { kind: "Rel", elem: STR };
       case "Underscore": {
         const t = ctx["_"];
@@ -279,6 +281,7 @@ export class Env {
       case "Num": return Number(e.text);
       case "Bool": return e.value;
       case "Str": return e.value;
+      case "Null": return null;
       case "Regex": return new RegexVal(e.pattern);
       case "Underscore": return vals["_"];
       case "Ref": return vals[e.name];
@@ -312,7 +315,7 @@ class RegexVal {
   constructor(readonly src: string) {}
 }
 type EvalRecord = { [k: string]: EvalVal };
-type EvalVal = number | string | boolean | RegexVal | EvalVal[] | EvalRecord;
+type EvalVal = number | string | boolean | null | RegexVal | EvalVal[] | EvalRecord;
 
 function isRecord(v: EvalVal): v is EvalRecord {
   return typeof v === "object" && v !== null && !Array.isArray(v) && !(v instanceof RegexVal);

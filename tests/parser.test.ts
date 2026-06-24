@@ -82,6 +82,20 @@ describe("литералы", () => {
     assert.deepStrictEqual(parseLiteral('r".+@.+"'), N.Regex(".+@.+"));
   });
 
+  test("null и экспонента (JSON)", () => {
+    assert.deepStrictEqual(parseLiteral("null"), N.Null());
+    assert.deepStrictEqual(parseLiteral("1e3"), N.Num("1e3"));
+    assert.deepStrictEqual(parseLiteral("-1.5E-2"), N.Num("-1.5E-2"));
+  });
+
+  test("пустой кортеж и строковый ключ (JSON-объект)", () => {
+    assert.deepStrictEqual(parseLiteral("{}"), N.TupleLit([]));
+    assert.deepStrictEqual(
+      parseLiteral('{"order-id": 1, x: null}'),
+      N.TupleLit([["order-id", N.Num("1")], ["x", N.Null()]]),
+    );
+  });
+
   test("голый кортеж", () => {
     assert.deepStrictEqual(parseLiteral("{x: 3, y: 5}"), N.TupleLit([["x", N.Num("3")], ["y", N.Num("5")]]));
   });
