@@ -1,18 +1,26 @@
-// Печать литерала: AST → текст нотации (essensio/notation). Инверсия parseLiteral.
+// Печать: AST → текст нотации (essensio/notation). Инверсия парсера.
 //
-// ЧТО ДЕЛАЕТ  writeLiteral(e) печатает узел-литерал обратно в исходник нотации.
-// ВХОД  e: Expr (подмножество-литерал).  ВЫХОД  string.
+// ЧТО ДЕЛАЕТ
+//   writeLiteral(e)    печатает узел-литерал           (инверсия parseLiteral)
+//   writeExpression(e) печатает любое выражение         (инверсия parseExpression)
+//   writeType(t)       печатает тип                     (инверсия parseType)
+//   writeDecl(d)       печатает объявление              (инверсия parseDeclaration)
 //
-// ИНВАРИАНТ  parseLiteral(writeLiteral(x)) глубоко равно x для любого литерала x —
-//   это операция «записать» (разобрать(записать(v)) = v из spec/notation.md).
+// ИНВАРИАНТ  parseX(writeX(ast)) глубоко равно ast — это операция «записать»
+//   (разобрать(записать(v)) = v из spec/notation.md), теперь для всех четырёх
+//   входов парсера, а не только литералов.
 //
 // ПРАВИЛА
 //   * Строка/регэксп: экранируются \ и " (как ждёт scanString лексера).
 //   * Ключ кортежа печатается голым именем, если это валидное `имя` и не ключевое
 //     слово; иначе строкой ("order-id", "true", "1x") — так держится round-trip.
 //   * Число печатается своим текстом (Num.text уже валиден, в т.ч. экспонента).
+//   * Выражения: скобки минимальны, по той же иерархии приоритетов, что в парсере
+//     (or < and < not < сравнение < + − < * / < унарный − < постфикс «.» < атом);
+//     сравнения не цепляются.
 //
-// КРАЕВЫЕ → WriteError: не-литерал (Ref/Member/Apply/BinOp/UnOp/Underscore).
+// КРАЕВЫЕ → WriteError: writeLiteral на не-литерале (Ref/Member/Apply/BinOp/UnOp/
+//   Underscore). writeExpression печатает их штатно.
 
 import * as N from "./nodes";
 
@@ -44,4 +52,72 @@ function key(k: string): string {
 
 function quote(s: string): string {
   return '"' + s.replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
+}
+
+// ───────────────────────────── Выражения ─────────────────────────────
+
+export function writeExpression(e: N.Expr): string {
+  return expr(e, 0);
+}
+
+// Уровень приоритета узла (выше — крепче связывает), как в иерархии парсера.
+function prec(e: N.Expr): number {
+  switch (e.kind) {
+    case "BinOp":
+      switch (e.op) {
+        case "or": return 1;
+        case "and": return 2;
+        case "=": case "!=": case "<": case ">": case "<=": case ">=": case "~": return 4;
+        case "+": case "-": return 5;
+        case "*": case "/": return 6;
+        default: return 9;
+      }
+    case "UnOp": return e.op === "not" ? 3 : 7;
+    case "Member": return 8;
+    default: return 9; // атомы: литералы, Ref, Apply, Underscore, селекторы
+  }
+}
+
+// Печатает e и скобкует, если его приоритет ниже требуемого контекстом.
+function expr(e: N.Expr, min: number): string {
+  const s = render(e);
+  return prec(e) < min ? "(" + s + ")" : s;
+}
+
+function render(e: N.Expr): string {
+  switch (e.kind) {
+    case "Underscore": return "_";
+    case "Ref": return e.name;
+    case "Member": return expr(e.obj, 8) + "." + e.field;
+    case "Apply": return e.name + "(" + e.args.map((a) => expr(a, 0)).join(", ") + ")";
+    case "UnOp": return e.op === "not" ? "not " + expr(e.operand, 3) : "-" + expr(e.operand, 7);
+    case "BinOp": {
+      const p = prec(e);
+      const leftMin = p === 4 ? p + 1 : p; // сравнение не цепляется → левый тоже крепче
+      return expr(e.left, leftMin) + " " + e.op + " " + expr(e.right, p + 1);
+    }
+    default: return writeLiteral(e); // Num/Bool/Str/Null/Regex/TupleLit/RelLit/селекторы
+  }
+}
+
+// ─────────────────────────── Типы и объявления ───────────────────────────
+
+export function writeType(t: N.TypeExpr): string {
+  switch (t.kind) {
+    case "TName": return t.name;
+    case "TRef": return "#" + t.target;
+    case "TRel": return atomType(t.elem) + "[]";
+    case "TTuple": return "{" + t.fields.map(([k, ft]) => key(k) + ": " + atomType(ft)).join(", ") + "}";
+    case "TConstraint": return writeType(t.base) + " | " + writeExpression(t.pred);
+  }
+}
+
+export function writeDecl(d: N.Decl): string {
+  return d.name + " = " + writeType(d.type);
+}
+
+// Тип в позиции, где верхний конструктор-ограничение «|» требует скобок: элемент
+// отношения (`(Число | _ > 0)[]`) и тип поля кортежа (`{цена: (Число | _ > 0)}`).
+function atomType(t: N.TypeExpr): string {
+  return t.kind === "TConstraint" ? "(" + writeType(t) + ")" : writeType(t);
 }

@@ -7,8 +7,8 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
 import * as N from "../src/nodes";
-import { parseLiteral } from "../src/parser";
-import { writeLiteral, WriteError } from "../src/writer";
+import { parseDeclaration, parseType, parseExpression, parseLiteral } from "../src/parser";
+import { writeLiteral, writeExpression, writeType, writeDecl, WriteError } from "../src/writer";
 
 describe("точный текст", () => {
   test("скаляры и null", () => {
@@ -74,4 +74,83 @@ describe("ошибки", () => {
     assert.throws(() => writeLiteral(N.BinOp("+", N.Num("1"), N.Num("2"))), WriteError);
     assert.throws(() => writeLiteral(N.Ref("x")), WriteError);
   });
+});
+
+describe("точный текст: типы и объявления", () => {
+  test("имя, отношение, кортеж, ссылка", () => {
+    assert.equal(writeType(N.TName("Число")), "Число");
+    assert.equal(writeType(N.TRel(N.TName("Заказ"))), "Заказ[]");
+    assert.equal(writeType(N.TRel(N.TRel(N.TName("Заказ")))), "Заказ[][]");
+    assert.equal(writeType(N.TTuple([["x", N.TName("Число")], ["y", N.TName("Число")]])), "{x: Число, y: Число}");
+    assert.equal(writeType(N.TRef("Заказ")), "#Заказ");
+  });
+  test("ограничение и скобки в позициях элемента/поля", () => {
+    const pos = N.TConstraint(N.TName("Число"), N.BinOp(">", N.Underscore(), N.Num("0")));
+    assert.equal(writeType(pos), "Число | _ > 0");
+    assert.equal(writeType(N.TRel(pos)), "(Число | _ > 0)[]");
+    assert.equal(writeType(N.TTuple([["цена", pos]])), "{цена: (Число | _ > 0)}");
+    assert.equal(writeDecl(N.Decl("Положительное", pos)), "Положительное = Число | _ > 0");
+  });
+  test("ключ-не-имя печатается строкой", () => {
+    assert.equal(writeType(N.TTuple([["order-id", N.TName("Число")]])), '{"order-id": Число}');
+  });
+});
+
+describe("точный текст: выражения и приоритеты", () => {
+  test("связки и сравнения (без лишних скобок)", () => {
+    const band = N.BinOp("and", N.BinOp(">=", N.Underscore(), N.Num("0")), N.BinOp("<=", N.Underscore(), N.Num("100")));
+    assert.equal(writeExpression(band), "_ >= 0 and _ <= 100");
+    assert.equal(writeExpression(N.UnOp("not", N.BinOp("or", N.Ref("a"), N.Ref("b")))), "not (a or b)");
+  });
+  test("арифметика: скобки только где нужно", () => {
+    assert.equal(writeExpression(N.BinOp("+", N.Ref("a"), N.BinOp("*", N.Ref("b"), N.Ref("c")))), "a + b * c");
+    assert.equal(writeExpression(N.BinOp("*", N.BinOp("+", N.Ref("a"), N.Ref("b")), N.Ref("c"))), "(a + b) * c");
+  });
+  test("доступ, применение, членство", () => {
+    assert.equal(writeExpression(N.Member(N.Ref("a"), "x")), "a.x");
+    assert.equal(writeExpression(N.Apply("len", [N.Ref("s")])), "len(s)");
+    assert.equal(writeExpression(N.BinOp("~", N.Underscore(), N.Regex(".+@.+"))), '_ ~ r".+@.+"');
+  });
+});
+
+describe("round-trip parseType(writeType(x)) ≡ x", () => {
+  for (const src of [
+    "Число", "Строка", "Заказ[]", "Заказ[][]",
+    "{x: Число, y: Число}", "{адрес: {улица: Строка}}",
+    "#Заказ", "Число | _ > 0", "{цена: (Число | _ > 0)}", "(Число | _ > 0)[]",
+    "{a: Точка, b: Точка} | a != b", "{имя: Строка, заказы: Заказ[]}",
+  ]) {
+    test(src, () => {
+      const ast = parseType(src);
+      assert.deepStrictEqual(parseType(writeType(ast)), ast);
+    });
+  }
+});
+
+describe("round-trip parseDeclaration(writeDecl(x)) ≡ x", () => {
+  for (const src of [
+    "Точка = {x: Число, y: Число}",
+    "Положительное = Число | _ > 0",
+    "Клиент = {имя: Строка, заказы: Заказ[]}",
+    'Категория = Строка | _ ~ ["грузчик", "кассир"]',
+    "Прямоугольник = {ширина: Положительное, высота: Положительное} | ширина >= высота",
+  ]) {
+    test(src, () => {
+      const ast = parseDeclaration(src);
+      assert.deepStrictEqual(parseDeclaration(writeDecl(ast)), ast);
+    });
+  }
+});
+
+describe("round-trip parseExpression(writeExpression(x)) ≡ x", () => {
+  for (const src of [
+    "_ > 0", "_ >= 0 and _ <= 100", "ширина >= высота", "a != b",
+    "len(s)", '_ ~ r".+@.+"', "not (a or b)", "a + 1", "a + b * c", "(a + b) * c",
+    "a.x", '_ ~ ["a", "b", "c"]', "a and b or c", "(a or b) and c",
+  ]) {
+    test(src, () => {
+      const ast = parseExpression(src);
+      assert.deepStrictEqual(parseExpression(writeExpression(ast)), ast);
+    });
+  }
 });

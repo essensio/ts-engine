@@ -103,3 +103,16 @@ export function tokenize(src: string): Token[] {
   toks.push({ kind: "EOF", value: "", pos: n });
   return toks;
 }
+
+// Строка — валидное `имя` грамматики (буква, далее буквы/цифры/`_`) и не ключевое
+// слово? Опирается на сам лексер — единый источник правила имени для потребителей,
+// которым нужно проверить вводимое имя (типа, поля), не дублируя регулярку.
+export function isName(s: string): boolean {
+  let toks: Token[];
+  try {
+    toks = tokenize(s);
+  } catch {
+    return false;
+  }
+  return toks.length === 2 && toks[0].kind === "NAME" && toks[0].value === s;
+}
