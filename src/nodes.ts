@@ -1,4 +1,4 @@
-// AST-узлы трёх грамматик (essensio/notation): типы, литералы, выражения.
+// AST-узлы четырёх грамматик (essensio/notation): типы, литералы, выражения, запросы.
 //
 // Узлы — простые размеченные объекты (discriminated union по полю `kind`).
 // Для каждого узла есть конструктор-функция того же имени: он даёт ровно тот
@@ -6,12 +6,16 @@
 //
 // Литералы — частный случай выражений: их узлы (Num … TupleLit, RelLit, селекторы)
 // служат и атомами выражений; узлы Underscore/Ref/Member/Apply/BinOp/UnOp — только
-// в выражениях. Узлы типов (T*) — отдельное семейство (выражение-тип).
+// в выражениях. Узлы типов (T*) — отдельное семейство (выражение-тип): у TTuple
+// флаг `entity` различает кортеж-сущность (объявлен с `#`, своя таблица-extent) и
+// кортеж-значение (встраивается в поле владельца). Запрос (Query) — четвёртое
+// семейство-корень: источник + шаги Select σ / Project π / Unnest μ, каждый шаг —
+// отношение → отношение.
 
 // ───────────────────────── Типы (выражение-тип) ─────────────────────────
 
 export type TName = { kind: "TName"; name: string };
-export type TTuple = { kind: "TTuple"; fields: Array<[string, TypeExpr]> };
+export type TTuple = { kind: "TTuple"; fields: Array<[string, TypeExpr]>; entity: boolean };
 export type TRel = { kind: "TRel"; elem: TypeExpr };
 export type TRef = { kind: "TRef"; target: string };
 export type TConstraint = { kind: "TConstraint"; base: TypeExpr; pred: Expr };
@@ -19,7 +23,7 @@ export type TypeExpr = TName | TTuple | TRel | TRef | TConstraint;
 export type Decl = { kind: "Decl"; name: string; type: TypeExpr };
 
 export const TName = (name: string): TName => ({ kind: "TName", name });
-export const TTuple = (fields: Array<[string, TypeExpr]>): TTuple => ({ kind: "TTuple", fields });
+export const TTuple = (fields: Array<[string, TypeExpr]>, entity = false): TTuple => ({ kind: "TTuple", fields, entity });
 export const TRel = (elem: TypeExpr): TRel => ({ kind: "TRel", elem });
 export const TRef = (target: string): TRef => ({ kind: "TRef", target });
 export const TConstraint = (base: TypeExpr, pred: Expr): TConstraint => ({ kind: "TConstraint", base, pred });
@@ -67,3 +71,16 @@ export const Member = (obj: Expr, field: string): Member => ({ kind: "Member", o
 export const Apply = (name: string, args: Expr[]): Apply => ({ kind: "Apply", name, args });
 export const BinOp = (op: string, left: Expr, right: Expr): BinOp => ({ kind: "BinOp", op, left, right });
 export const UnOp = (op: string, operand: Expr): UnOp => ({ kind: "UnOp", op, operand });
+
+// ─────────────────────── Запрос (реляционная алгебра) ───────────────────────
+
+export type Select = { kind: "Select"; pred: Expr };
+export type Project = { kind: "Project"; fields: string[] };
+export type Unnest = { kind: "Unnest"; field: string };
+export type QueryStep = Select | Project | Unnest;
+export type Query = { kind: "Query"; source: string | Query; steps: QueryStep[] };
+
+export const Select = (pred: Expr): Select => ({ kind: "Select", pred });
+export const Project = (fields: string[]): Project => ({ kind: "Project", fields });
+export const Unnest = (field: string): Unnest => ({ kind: "Unnest", field });
+export const Query = (source: string | Query, steps: QueryStep[]): Query => ({ kind: "Query", source, steps });

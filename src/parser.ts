@@ -1,10 +1,11 @@
 // Парсер: токены → AST. Рекурсивный спуск по сводной грамматике (essensio/notation).
 //
-// ЧЕТЫРЕ ВХОДА (по нонтерминалу-корню):
+// ПЯТЬ ВХОДОВ (по нонтерминалу-корню):
 //   parseDeclaration(src) -> Decl       (объявление = имя "=" тип)
 //   parseType(src)        -> TypeExpr   (тип)
 //   parseLiteral(src)     -> Expr       (литерал = значение | селектор)
 //   parseExpression(src)  -> Expr       (выражение)
+//   parseQuery(src)       -> Query      (запрос = "?" источник { шаг })
 //
 // ИНВАРИАНТЫ
 //   * Приоритет операторов задаётся иерархией: or < and < not < comparison <
@@ -13,9 +14,13 @@
 //   * Каждый вход требует EOF в конце.
 //   * Отношение — постфикс: T[] (отношение-тип). Тип поля — отношение-тип (без верхнего "|");
 //     уточнение поля только в скобках.
+//   * Кортеж-тип: необязательный ведущий "#," — признак сущности (entity); далее ≥1 поле.
+//   * Запрос ведёт "?": источник (имя сущности или под-запрос в скобках), затем
+//     шаги слева направо — выборка "[…]" σ, проекция ".(…)" π, развёртка ".имя" μ.
 //
 // КРАЕВЫЕ → ParseError: неполный вход, лишний хвост, цепочка сравнений,
-//   "|" в типе поля без скобок, ссылка "#" не на имя, имя как литерал.
+//   "|" в типе поля без скобок, ссылка "#" не на имя, имя как литерал,
+//   "#" в кортеже-типе без полей, шаг запроса не после источника.
 
 import { tokenize, type Token } from "./lexer";
 import * as N from "./nodes";
@@ -78,10 +83,12 @@ class Parser {
 
   private tupleType(): N.TTuple {
     this.eat("LBRACE");
+    let entity = false;
+    if (this.at("HASH")) { this.next(); this.eat("COMMA"); entity = true; }
     const fields: Array<[string, N.TypeExpr]> = [this.typeField()];
     while (this.at("COMMA")) { this.next(); fields.push(this.typeField()); }
     this.eat("RBRACE");
-    return N.TTuple(fields);
+    return N.TTuple(fields, entity);
   }
 
   private typeField(): [string, N.TypeExpr] {
@@ -243,9 +250,37 @@ class Parser {
     this.eat("RBRACK");
     return N.RelLit(elems);
   }
+
+  // ── запрос ──
+  query(): N.Query {
+    this.eat("QUESTION");
+    const source = this.querySource();
+    const steps: N.QueryStep[] = [];
+    while (this.at("LBRACK") || this.at("DOT")) steps.push(this.queryStep());
+    return N.Query(source, steps);
+  }
+
+  private querySource(): string | N.Query {
+    if (this.at("LPAREN")) { this.next(); const q = this.query(); this.eat("RPAREN"); return q; }
+    return this.eat("NAME").value;
+  }
+
+  private queryStep(): N.QueryStep {
+    if (this.at("LBRACK")) { this.next(); const pred = this.expression(); this.eat("RBRACK"); return N.Select(pred); }
+    this.eat("DOT");
+    if (this.at("LPAREN")) {
+      this.next();
+      const fields: string[] = [this.eat("NAME").value];
+      while (this.at("COMMA")) { this.next(); fields.push(this.eat("NAME").value); }
+      this.eat("RPAREN");
+      return N.Project(fields);
+    }
+    return N.Unnest(this.eat("NAME").value);
+  }
 }
 
 export function parseDeclaration(src: string): N.Decl { const p = new Parser(src); const d = p.declaration(); p.expectEof(); return d; }
 export function parseType(src: string): N.TypeExpr { const p = new Parser(src); const t = p.type(); p.expectEof(); return t; }
 export function parseLiteral(src: string): N.Expr { const p = new Parser(src); const l = p.literal(); p.expectEof(); return l; }
 export function parseExpression(src: string): N.Expr { const p = new Parser(src); const e = p.expression(); p.expectEof(); return e; }
+export function parseQuery(src: string): N.Query { const p = new Parser(src); const q = p.query(); p.expectEof(); return q; }

@@ -26,7 +26,7 @@ const TWO: Record<string, string> = { "!=": "NE", "<=": "LE", ">=": "GE" };
 const ONE: Record<string, string> = {
   "=": "EQ", "<": "LT", ">": "GT", "~": "TILDE",
   "+": "PLUS", "-": "MINUS", "*": "STAR", "/": "SLASH",
-  "|": "BAR", "#": "HASH", ".": "DOT", ":": "COLON", ",": "COMMA",
+  "|": "BAR", "#": "HASH", "?": "QUESTION", ".": "DOT", ":": "COLON", ",": "COMMA",
   "(": "LPAREN", ")": "RPAREN", "{": "LBRACE", "}": "RBRACE",
   "[": "LBRACK", "]": "RBRACK",
 };

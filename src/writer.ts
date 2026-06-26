@@ -5,15 +5,17 @@
 //   writeExpression(e) печатает любое выражение         (инверсия parseExpression)
 //   writeType(t)       печатает тип                     (инверсия parseType)
 //   writeDecl(d)       печатает объявление              (инверсия parseDeclaration)
+//   writeQuery(q)      печатает запрос                  (инверсия parseQuery)
 //
 // ИНВАРИАНТ  parseX(writeX(ast)) глубоко равно ast — это операция «записать»
-//   (разобрать(записать(v)) = v из spec/notation.md), теперь для всех четырёх
+//   (разобрать(записать(v)) = v из spec/notation.md), теперь для всех пяти
 //   входов парсера, а не только литералов.
 //
 // ПРАВИЛА
 //   * Строка/регэксп: экранируются \ и " (как ждёт scanString лексера).
 //   * Ключ кортежа печатается голым именем, если это валидное `имя` и не ключевое
 //     слово; иначе строкой ("order-id", "true", "1x") — так держится round-trip.
+//   * Кортеж-сущность (entity) печатается с ведущим "#," ({#, поле: T}).
 //   * Число печатается своим текстом (Num.text уже валиден, в т.ч. экспонента).
 //   * Выражения: скобки минимальны, по той же иерархии приоритетов, что в парсере
 //     (or < and < not < сравнение < + − < * / < унарный − < постфикс «.» < атом);
@@ -107,7 +109,7 @@ export function writeType(t: N.TypeExpr): string {
     case "TName": return t.name;
     case "TRef": return "#" + t.target;
     case "TRel": return atomType(t.elem) + "[]";
-    case "TTuple": return "{" + t.fields.map(([k, ft]) => key(k) + ": " + atomType(ft)).join(", ") + "}";
+    case "TTuple": return "{" + (t.entity ? "#, " : "") + t.fields.map(([k, ft]) => key(k) + ": " + atomType(ft)).join(", ") + "}";
     case "TConstraint": return writeType(t.base) + " | " + writeExpression(t.pred);
   }
 }
@@ -120,4 +122,19 @@ export function writeDecl(d: N.Decl): string {
 // отношения (`(Число | _ > 0)[]`) и тип поля кортежа (`{цена: (Число | _ > 0)}`).
 function atomType(t: N.TypeExpr): string {
   return t.kind === "TConstraint" ? "(" + writeType(t) + ")" : writeType(t);
+}
+
+// ───────────────────────────── Запрос ─────────────────────────────
+
+export function writeQuery(q: N.Query): string {
+  const src = typeof q.source === "string" ? q.source : "(" + writeQuery(q.source) + ")";
+  return "?" + src + q.steps.map(step).join("");
+}
+
+function step(s: N.QueryStep): string {
+  switch (s.kind) {
+    case "Select": return "[" + writeExpression(s.pred) + "]";
+    case "Project": return ".(" + s.fields.join(", ") + ")";
+    case "Unnest": return "." + s.field;
+  }
 }

@@ -7,7 +7,7 @@ import { describe, test } from "node:test";
 
 import { LexError } from "../src/lexer";
 import * as N from "../src/nodes";
-import { ParseError, parseDeclaration, parseExpression, parseLiteral } from "../src/parser";
+import { ParseError, parseDeclaration, parseExpression, parseLiteral, parseQuery } from "../src/parser";
 
 describe("объявления", () => {
   test("подтип", () => {
@@ -22,6 +22,17 @@ describe("объявления", () => {
       parseDeclaration("Точка = {x: Число, y: Число}"),
       N.Decl("Точка", N.TTuple([["x", N.TName("Число")], ["y", N.TName("Число")]])),
     );
+  });
+
+  test("кортеж-сущность (#)", () => {
+    assert.deepStrictEqual(
+      parseDeclaration("Задача = {#, название: Строка, статус: Строка}"),
+      N.Decl("Задача", N.TTuple([["название", N.TName("Строка")], ["статус", N.TName("Строка")]], true)),
+    );
+  });
+
+  test("# без полей → ошибка", () => {
+    assert.throws(() => parseDeclaration("X = {#}"), ParseError);
   });
 
   test("отношение (постфикс T[])", () => {
@@ -168,5 +179,51 @@ describe("выражения", () => {
 
   test("незакрытая строка", () => {
     assert.throws(() => parseExpression('"abc'), LexError);
+  });
+});
+
+describe("запрос", () => {
+  test("источник без шагов", () => {
+    assert.deepStrictEqual(parseQuery("?Заказ"), N.Query("Заказ", []));
+  });
+
+  test("выборка σ", () => {
+    assert.deepStrictEqual(
+      parseQuery("?Заказ[количество > 1]"),
+      N.Query("Заказ", [N.Select(N.BinOp(">", N.Ref("количество"), N.Num("1")))]),
+    );
+  });
+
+  test("проекция π", () => {
+    assert.deepStrictEqual(
+      parseQuery("?Заказ.(адрес, количество)"),
+      N.Query("Заказ", [N.Project(["адрес", "количество"])]),
+    );
+  });
+
+  test("развёртка μ", () => {
+    assert.deepStrictEqual(parseQuery("?Клиент.заказы"), N.Query("Клиент", [N.Unnest("заказы")]));
+  });
+
+  test("цепочка σ → π", () => {
+    assert.deepStrictEqual(
+      parseQuery("?Заказ[количество > 1].(адрес)"),
+      N.Query("Заказ", [N.Select(N.BinOp(">", N.Ref("количество"), N.Num("1"))), N.Project(["адрес"])]),
+    );
+  });
+
+  test("под-запрос как источник", () => {
+    assert.deepStrictEqual(
+      parseQuery("?(?Заказ[количество > 1]).(адрес)"),
+      N.Query(N.Query("Заказ", [N.Select(N.BinOp(">", N.Ref("количество"), N.Num("1")))]), [N.Project(["адрес"])]),
+    );
+  });
+
+  test("без ведущего ? → ошибка", () => {
+    assert.throws(() => parseQuery("Заказ"), ParseError);
+  });
+
+  test("пустая проекция → ошибка", () => {
+    assert.throws(() => parseQuery("?Заказ.()"), ParseError);
   });
 });

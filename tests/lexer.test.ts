@@ -4,7 +4,19 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { isName } from "../src/lexer";
+import { isName, tokenize } from "../src/lexer";
+
+describe("tokenize: # и ?", () => {
+  test("? — отдельный токен QUESTION", () => {
+    assert.deepStrictEqual(tokenize("?").map((t) => t.kind), ["QUESTION", "EOF"]);
+  });
+  test("# — токен HASH", () => {
+    assert.deepStrictEqual(tokenize("#").map((t) => t.kind), ["HASH", "EOF"]);
+  });
+  test("?Заказ — запрос к сущности", () => {
+    assert.deepStrictEqual(tokenize("?Заказ").map((t) => t.kind), ["QUESTION", "NAME", "EOF"]);
+  });
+});
 
 describe("isName", () => {
   test("валидные имена (в т.ч. кириллица)", () => {

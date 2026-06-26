@@ -5,6 +5,7 @@
 //   checkLiteral(src)           — тип самотипизированного литерала (селектор/скаляр).
 //   checkLiteralAs(src, T)      — литерал — допустимое ЗНАЧЕНИЕ типа T (вкл. ограничения).
 //   checkExpr(src, ctx, expect) — выражение well-typed в контексте ctx → его тип.
+//   checkQuery(src)             — запрос well-typed → тип результата (отношение).
 //
 // ИНВАРИАНТЫ
 //   * Системные типы: Число, Строка, Булево, Дата, Время, UUID.
@@ -12,19 +13,24 @@
 //   * «Допустимо» = проверка не падает; для ограничения дополнительно тип = Булево.
 //   * Литерал-константа дополнительно проверяется на ограничение вычислением (evalConst):
 //     Положительное(-2) недопустимо, хотя типизируется.
+//   * Запрос: источник — сущность (кортеж-тип с `#`), его extent — отношение этой
+//     сущности; шаги замкнуты (отношение → отношение): σ сохраняет тип, π оставляет
+//     поля (результат — кортеж-значение), μ входит в поле-отношение/кортеж.
 //
 // КРАЕВЫЕ → TypeErr: неизвестное имя/тип; несовпадение арности/типов; 5 + "текст";
 //   сравнение/равенство разных типов; ~ с правым не-множеством; нарушение ограничения
-//   значением; доступ к компоненте у не-кортежа; пустой литерал-отношение без тега.
+//   значением; доступ к компоненте у не-кортежа; пустой литерал-отношение без тега;
+//   источник запроса не сущность; предикат выборки не Булево; проекция/развёртка по
+//   несуществующему полю; развёртка по полю-не-отношению/не-кортежу.
 
 import * as N from "./nodes";
-import { parseDeclaration, parseExpression, parseLiteral } from "./parser";
+import { parseDeclaration, parseExpression, parseLiteral, parseQuery } from "./parser";
 
 // ───────────────────────── семантические типы ─────────────────────────
 
 export type Scalar = { kind: "Scalar"; name: string };
 export type Sub = { kind: "Sub"; name: string; base: SemType; pred: N.Expr };
-export type Tup = { kind: "Tup"; fields: Array<[string, SemType]> };
+export type Tup = { kind: "Tup"; fields: Array<[string, SemType]>; entity: boolean };
 export type Rel = { kind: "Rel"; elem: SemType };
 export type RefT = { kind: "RefT"; target: string };
 export type SemType = Scalar | Sub | Tup | Rel | RefT;
@@ -87,7 +93,7 @@ export class Env {
       case "TName":
         return this.sem(te.name);
       case "TTuple":
-        return { kind: "Tup", fields: te.fields.map(([fn, ft]) => [fn, this.resolve(ft)]) };
+        return { kind: "Tup", fields: te.fields.map(([fn, ft]) => [fn, this.resolve(ft)]), entity: te.entity };
       case "TRel":
         return { kind: "Rel", elem: this.resolve(te.elem) };
       case "TRef":
@@ -123,6 +129,58 @@ export class Env {
     return t;
   }
 
+  // ── проверка запроса: источник-сущность, затем замкнутые шаги ──
+  checkQuery(src: string): Rel {
+    return this.query(parseQuery(src));
+  }
+
+  private query(q: N.Query): Rel {
+    let rel = this.querySource(q.source);
+    for (const s of q.steps) rel = this.queryStep(rel, s);
+    return rel;
+  }
+
+  // источник запроса даёт отношение: extent сущности либо результат под-запроса.
+  private querySource(s: string | N.Query): Rel {
+    if (typeof s !== "string") return this.query(s);
+    const t = this.sem(s);
+    const r = root(t);
+    if (r.kind !== "Tup" || !r.entity) throw new TypeErr(`источник запроса ${s} должен быть сущностью (кортеж с #)`);
+    return { kind: "Rel", elem: t };
+  }
+
+  // шаг замкнут: отношение → отношение. σ сохраняет тип; π оставляет поля
+  // (результат — кортеж-значение); μ входит в поле-отношение (плоско) либо в
+  // поле-кортеж (отношение из него).
+  private queryStep(rel: Rel, s: N.QueryStep): Rel {
+    const elem = root(rel.elem);
+    if (elem.kind !== "Tup") throw new TypeErr("шаг запроса применим к отношению кортежей");
+    switch (s.kind) {
+      case "Select": {
+        const ctx: Ctx = {};
+        for (const [fn, ft] of elem.fields) ctx[fn] = ft;
+        if (!same(this.infer(s.pred, ctx), BOOL)) throw new TypeErr("предикат выборки должен быть Булево");
+        return rel;
+      }
+      case "Project": {
+        const picked: Array<[string, SemType]> = s.fields.map((f) => {
+          const found = elem.fields.find(([fn]) => fn === f);
+          if (found === undefined) throw new TypeErr(`проекция: нет поля ${f}`);
+          return [f, found[1]];
+        });
+        return { kind: "Rel", elem: { kind: "Tup", fields: picked, entity: false } };
+      }
+      case "Unnest": {
+        const found = elem.fields.find(([fn]) => fn === s.field);
+        if (found === undefined) throw new TypeErr(`развёртка: нет поля ${s.field}`);
+        const ft = root(found[1]);
+        if (ft.kind === "Rel") return { kind: "Rel", elem: ft.elem };
+        if (ft.kind === "Tup") return { kind: "Rel", elem: found[1] };
+        throw new TypeErr(`развёртка: поле ${s.field} не отношение и не кортеж`);
+      }
+    }
+  }
+
   private sem(name: string): SemType {
     const t = this.types.get(name);
     if (t === undefined) throw new TypeErr(`неизвестный тип ${name}`);
@@ -154,7 +212,7 @@ export class Env {
         throw new TypeErr(`нет компоненты ${e.field}`);
       }
       case "TupleLit":
-        return { kind: "Tup", fields: e.fields.map(([fn, v]) => [fn, this.infer(v, ctx)]) };
+        return { kind: "Tup", fields: e.fields.map(([fn, v]) => [fn, this.infer(v, ctx)]), entity: false };
       case "RelLit": {
         if (e.elems.length === 0) throw new TypeErr("пустой литерал-отношение требует тега");
         const ets = e.elems.map((x) => this.infer(x, ctx));
@@ -380,6 +438,6 @@ function show(t: SemType): string {
     case "Sub": return t.name || `подтип(${show(t.base)})`;
     case "Rel": return `[${show(t.elem)}]`;
     case "RefT": return `#${t.target}`;
-    case "Tup": return "{" + t.fields.map(([fn, ft]) => `${fn}: ${show(ft)}`).join(", ") + "}";
+    case "Tup": return "{" + (t.entity ? "#, " : "") + t.fields.map(([fn, ft]) => `${fn}: ${show(ft)}`).join(", ") + "}";
   }
 }

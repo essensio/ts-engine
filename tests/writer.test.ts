@@ -7,8 +7,8 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
 import * as N from "../src/nodes";
-import { parseDeclaration, parseType, parseExpression, parseLiteral } from "../src/parser";
-import { writeLiteral, writeExpression, writeType, writeDecl, WriteError } from "../src/writer";
+import { parseDeclaration, parseType, parseExpression, parseLiteral, parseQuery } from "../src/parser";
+import { writeLiteral, writeExpression, writeType, writeDecl, writeQuery, WriteError } from "../src/writer";
 
 describe("точный текст", () => {
   test("скаляры и null", () => {
@@ -94,6 +94,10 @@ describe("точный текст: типы и объявления", () => {
   test("ключ-не-имя печатается строкой", () => {
     assert.equal(writeType(N.TTuple([["order-id", N.TName("Число")]])), '{"order-id": Число}');
   });
+  test("кортеж-сущность печатается с #", () => {
+    assert.equal(writeType(N.TTuple([["название", N.TName("Строка")]], true)), "{#, название: Строка}");
+    assert.equal(writeType(N.TTuple([["x", N.TName("Число")]], false)), "{x: Число}");
+  });
 });
 
 describe("точный текст: выражения и приоритеты", () => {
@@ -134,10 +138,29 @@ describe("round-trip parseDeclaration(writeDecl(x)) ≡ x", () => {
     "Клиент = {имя: Строка, заказы: Заказ[]}",
     'Категория = Строка | _ ~ ["грузчик", "кассир"]',
     "Прямоугольник = {ширина: Положительное, высота: Положительное} | ширина >= высота",
+    "Задача = {#, название: Строка, статус: Строка}",
+    "Заказ = {#, объект: Строка, количество: Число} | количество >= 1",
   ]) {
     test(src, () => {
       const ast = parseDeclaration(src);
       assert.deepStrictEqual(parseDeclaration(writeDecl(ast)), ast);
+    });
+  }
+});
+
+describe("запрос: точный текст и round-trip", () => {
+  test("точный текст", () => {
+    const q = N.Query("Заказ", [N.Select(N.BinOp(">", N.Ref("количество"), N.Num("1"))), N.Project(["адрес", "количество"])]);
+    assert.equal(writeQuery(q), "?Заказ[количество > 1].(адрес, количество)");
+    assert.equal(writeQuery(N.Query("Клиент", [N.Unnest("заказы")])), "?Клиент.заказы");
+  });
+  for (const src of [
+    "?Заказ", "?Заказ[количество > 1]", "?Заказ.(адрес, количество)", "?Клиент.заказы",
+    "?Заказ[количество > 1].(адрес)", "?(?Заказ[количество > 1]).(адрес)",
+  ]) {
+    test(src, () => {
+      const ast = parseQuery(src);
+      assert.deepStrictEqual(parseQuery(writeQuery(ast)), ast);
     });
   }
 });
