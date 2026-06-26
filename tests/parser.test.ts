@@ -12,7 +12,7 @@ import { ParseError, parseDeclaration, parseExpression, parseLiteral, parseQuery
 describe("объявления", () => {
   test("подтип", () => {
     assert.deepStrictEqual(
-      parseDeclaration("Положительное = Число | _ > 0"),
+      parseDeclaration("Положительное = Число & _ > 0"),
       N.Decl("Положительное", N.TConstraint(N.TName("Число"), N.BinOp(">", N.Underscore(), N.Num("0")))),
     );
   });
@@ -31,8 +31,50 @@ describe("объявления", () => {
     );
   });
 
-  test("# без полей → ошибка", () => {
-    assert.throws(() => parseDeclaration("X = {#}"), ParseError);
+  test("кортеж-сущность без полей ({#})", () => {
+    assert.deepStrictEqual(parseDeclaration("X = {#}"), N.Decl("X", N.TTuple([], true)));
+  });
+
+  test("пустой кортеж ({})", () => {
+    assert.deepStrictEqual(parseDeclaration("X = {}"), N.Decl("X", N.TTuple([])));
+  });
+
+  test("строковый ключ поля", () => {
+    assert.deepStrictEqual(
+      parseDeclaration('X = {"order-id": Число}'),
+      N.Decl("X", N.TTuple([["order-id", N.TName("Число")]])),
+    );
+  });
+
+  test("объединение (union)", () => {
+    assert.deepStrictEqual(
+      parseDeclaration("X = Число | Строка"),
+      N.Decl("X", N.TUnion([N.TName("Число"), N.TName("Строка")])),
+    );
+  });
+
+  test("union как элемент отношения — в скобках", () => {
+    assert.deepStrictEqual(
+      parseDeclaration("X = (Число | Строка)[]"),
+      N.Decl("X", N.TRel(N.TUnion([N.TName("Число"), N.TName("Строка")]))),
+    );
+  });
+
+  test("необязательность T | Пусто", () => {
+    assert.deepStrictEqual(
+      parseDeclaration("X = Дата | Пусто"),
+      N.Decl("X", N.TUnion([N.TName("Дата"), N.TName("Пусто")])),
+    );
+  });
+
+  test("подтип крепче union: A & p | B", () => {
+    assert.deepStrictEqual(
+      parseDeclaration("X = Число & _ > 0 | Строка"),
+      N.Decl("X", N.TUnion([
+        N.TConstraint(N.TName("Число"), N.BinOp(">", N.Underscore(), N.Num("0"))),
+        N.TName("Строка"),
+      ])),
+    );
   });
 
   test("отношение (постфикс T[])", () => {
@@ -55,7 +97,7 @@ describe("объявления", () => {
 
   test("ограничение кортежа", () => {
     assert.deepStrictEqual(
-      parseDeclaration("Прямоугольник = {ширина: Число, высота: Число} | ширина >= высота"),
+      parseDeclaration("Прямоугольник = {ширина: Число, высота: Число} & ширина >= высота"),
       N.Decl("Прямоугольник", N.TConstraint(
         N.TTuple([["ширина", N.TName("Число")], ["высота", N.TName("Число")]]),
         N.BinOp(">=", N.Ref("ширина"), N.Ref("высота")),
@@ -64,12 +106,12 @@ describe("объявления", () => {
   });
 
   test("уточнение поля без скобок → ошибка", () => {
-    assert.throws(() => parseDeclaration("X = {цена: Число | _ > 0}"), ParseError);
+    assert.throws(() => parseDeclaration("X = {цена: Число & _ > 0}"), ParseError);
   });
 
   test("уточнение поля в скобках — ок", () => {
     assert.deepStrictEqual(
-      parseDeclaration("X = {цена: (Число | _ > 0)}"),
+      parseDeclaration("X = {цена: (Число & _ > 0)}"),
       N.Decl("X", N.TTuple([["цена", N.TConstraint(N.TName("Число"), N.BinOp(">", N.Underscore(), N.Num("0")))]])),
     );
   });

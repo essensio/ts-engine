@@ -8,7 +8,8 @@
 // служат и атомами выражений; узлы Underscore/Ref/Member/Apply/BinOp/UnOp — только
 // в выражениях. Узлы типов (T*) — отдельное семейство (выражение-тип): у TTuple
 // флаг `entity` различает кортеж-сущность (объявлен с `#`, своя таблица) и
-// кортеж-значение (встраивается в поле владельца). Запрос (Query) — четвёртое
+// кортеж-значение (встраивается в поле владельца); TConstraint — подтип
+// (`база & предикат`), TUnion — объединение (`A | B`). Запрос (Query) — четвёртое
 // семейство-корень: источник + шаги Select σ / Project π / Unnest μ, каждый шаг —
 // отношение → отношение.
 
@@ -19,7 +20,8 @@ export type TTuple = { kind: "TTuple"; fields: Array<[string, TypeExpr]>; entity
 export type TRel = { kind: "TRel"; elem: TypeExpr };
 export type TRef = { kind: "TRef"; target: string };
 export type TConstraint = { kind: "TConstraint"; base: TypeExpr; pred: Expr };
-export type TypeExpr = TName | TTuple | TRel | TRef | TConstraint;
+export type TUnion = { kind: "TUnion"; members: TypeExpr[] };
+export type TypeExpr = TName | TTuple | TRel | TRef | TConstraint | TUnion;
 export type Decl = { kind: "Decl"; name: string; type: TypeExpr };
 
 export const TName = (name: string): TName => ({ kind: "TName", name });
@@ -27,6 +29,7 @@ export const TTuple = (fields: Array<[string, TypeExpr]>, entity = false): TTupl
 export const TRel = (elem: TypeExpr): TRel => ({ kind: "TRel", elem });
 export const TRef = (target: string): TRef => ({ kind: "TRef", target });
 export const TConstraint = (base: TypeExpr, pred: Expr): TConstraint => ({ kind: "TConstraint", base, pred });
+export const TUnion = (members: TypeExpr[]): TUnion => ({ kind: "TUnion", members });
 export const Decl = (name: string, type: TypeExpr): Decl => ({ kind: "Decl", name, type });
 
 // ───────────────────── Литералы (атомы) и выражения ─────────────────────

@@ -12,15 +12,17 @@
 //     sum < product < unary < postfix < atom.
 //   * Сравнение НЕ цепляется: comparison берёт максимум один оператор сравнения.
 //   * Каждый вход требует EOF в конце.
-//   * Отношение — постфикс: T[] (отношение-тип). Тип поля — отношение-тип (без верхнего "|");
-//     уточнение поля только в скобках.
-//   * Кортеж-тип: необязательный ведущий "#," — признак сущности (entity); далее ≥1 поле.
+//   * Тип = объединение "|" из ограничений "&" (подтип); "&" крепче "|".
+//   * Отношение — постфикс: T[] (отношение-тип). Тип поля — отношение-тип (без верхних
+//     "&"/"|"); уточнение поля только в скобках.
+//   * Кортеж-тип: ведущий "#" — сущность (entity); полей может не быть ({}, {#}); ключ
+//     поля — имя или строка (нечитаемый ключ).
 //   * Запрос ведёт "?": источник (имя сущности или под-запрос в скобках), затем
 //     шаги слева направо — выборка "[…]" σ, проекция ".(…)" π, развёртка ".имя" μ.
 //
 // КРАЕВЫЕ → ParseError: неполный вход, лишний хвост, цепочка сравнений,
-//   "|" в типе поля без скобок, ссылка "#" не на имя, имя как литерал,
-//   "#" в кортеже-типе без полей, шаг запроса не после источника.
+//   "&"/"|" в типе поля без скобок, ссылка "#" не на имя, имя как литерал,
+//   шаг запроса не после источника.
 
 import { tokenize, type Token } from "./lexer";
 import * as N from "./nodes";
@@ -59,9 +61,18 @@ class Parser {
     return N.Decl(name, this.type());
   }
 
+  // тип = объединение ;  объединение = ограничение { "|" ограничение }
   type(): N.TypeExpr {
+    const members = [this.constraintType()];
+    while (this.at("BAR")) { this.next(); members.push(this.constraintType()); }
+    return members.length === 1 ? members[0] : N.TUnion(members);
+  }
+
+  // ограничение = отношение-тип [ "&" предикат ]  — "&" крепче "|"; предикат не
+  // содержит "|", поэтому не выходит за границу члена объединения.
+  private constraintType(): N.TypeExpr {
     const t = this.relType();
-    if (this.at("BAR")) { this.next(); return N.TConstraint(t, this.expression()); }
+    if (this.at("AMP")) { this.next(); return N.TConstraint(t, this.expression()); }
     return t;
   }
 
@@ -81,20 +92,33 @@ class Parser {
     throw new ParseError(`ожидался тип, получено ${t.kind} на ${t.pos}`);
   }
 
+  // кортеж-тип = "{" [ сущность | поля ] "}"
+  //   сущность = "#" { "," поле }   (полей может не быть: {#})
+  //   поля     = поле { "," поле }
+  //   пустой {} допустим (нуль полей).
   private tupleType(): N.TTuple {
     this.eat("LBRACE");
     let entity = false;
-    if (this.at("HASH")) { this.next(); this.eat("COMMA"); entity = true; }
-    const fields: Array<[string, N.TypeExpr]> = [this.typeField()];
-    while (this.at("COMMA")) { this.next(); fields.push(this.typeField()); }
+    const fields: Array<[string, N.TypeExpr]> = [];
+    if (this.at("HASH")) {
+      this.next();
+      entity = true;
+      while (this.at("COMMA")) { this.next(); fields.push(this.typeField()); }
+    } else if (!this.at("RBRACE")) {
+      fields.push(this.typeField());
+      while (this.at("COMMA")) { this.next(); fields.push(this.typeField()); }
+    }
     this.eat("RBRACE");
     return N.TTuple(fields, entity);
   }
 
+  // поле = ( имя | строка ) ":" отношение-тип  — ключ может быть строкой (нечитаемый ключ "order-id")
   private typeField(): [string, N.TypeExpr] {
-    const name = this.eat("NAME").value;
+    const k = this.peek();
+    if (k.kind !== "NAME" && k.kind !== "STRING") throw new ParseError(`ожидался ключ поля (имя или строка), получено ${k.kind} на ${k.pos}`);
+    this.next();
     this.eat("COLON");
-    return [name, this.relType()];
+    return [k.value, this.relType()];
   }
 
   // ── выражения (по убыванию приоритета) ──

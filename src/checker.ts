@@ -8,8 +8,11 @@
 //   checkQuery(src)             — запрос well-typed → тип результата (отношение).
 //
 // ИНВАРИАНТЫ
-//   * Системные типы: Число, Строка, Булево, Дата, Время, UUID.
+//   * Системные типы: Строка, Число, Булево, Дата, Время, UUID; особняком Пусто
+//     (вырожденный домен единственного значения null).
 //   * Подтип подставим вместо родителя: для операций тип сводится к корню (root).
+//   * Объединение (Uni): значение годится, если подходит под любой член; общие
+//     операции union — только =/!=, доменные требуют сужения.
 //   * «Допустимо» = проверка не падает; для ограничения дополнительно тип = Булево.
 //   * Литерал-константа дополнительно проверяется на ограничение вычислением (evalConst):
 //     Положительное(-2) недопустимо, хотя типизируется.
@@ -33,15 +36,17 @@ export type Sub = { kind: "Sub"; name: string; base: SemType; pred: N.Expr };
 export type Tup = { kind: "Tup"; fields: Array<[string, SemType]>; entity: boolean };
 export type Rel = { kind: "Rel"; elem: SemType };
 export type RefT = { kind: "RefT"; target: string };
-export type SemType = Scalar | Sub | Tup | Rel | RefT;
+export type Uni = { kind: "Uni"; members: SemType[] };
+export type SemType = Scalar | Sub | Tup | Rel | RefT | Uni;
 
 const scalar = (name: string): Scalar => ({ kind: "Scalar", name });
-const SYSTEM = ["Число", "Строка", "Булево", "Дата", "Время", "UUID"];
+// Системные домены — в порядке спеки (Строка — корень и цель сериализации — первой).
+const SYSTEM = ["Строка", "Число", "Булево", "Дата", "Время", "UUID"];
 const NUM = scalar("Число");
 const STR = scalar("Строка");
 const BOOL = scalar("Булево");
-const NOTHING = scalar("Ничто");
-const ORDERED = new Set(["Число", "Строка", "Дата", "Время"]);
+const EMPTY = scalar("Пусто");   // вырожденный домен: единственное значение null, только = / !=
+const ORDERED = new Set(["Строка", "Число", "Дата", "Время"]);
 
 export class TypeErr extends Error {}
 
@@ -65,7 +70,19 @@ export function same(a: SemType, b: SemType): boolean {
     if (a.fields.length !== b.fields.length) return false;
     return a.fields.every((f, i) => f[0] === b.fields[i][0] && same(f[1], b.fields[i][1]));
   }
+  if (a.kind === "Uni" && b.kind === "Uni") {
+    if (a.members.length !== b.members.length) return false;
+    return a.members.every((m, i) => same(m, b.members[i]));
+  }
   return false;
+}
+
+// Тип элемента разнотипного отношения — объединение различных (по `same`) типов:
+// один различный тип → он сам, несколько → Uni.
+function unionOf(types: SemType[]): SemType {
+  const distinct: SemType[] = [];
+  for (const t of types) if (!distinct.some((d) => same(d, t))) distinct.push(t);
+  return distinct.length === 1 ? distinct[0] : { kind: "Uni", members: distinct };
 }
 
 type Ctx = Record<string, SemType>;
@@ -75,6 +92,7 @@ export class Env {
 
   constructor() {
     for (const n of SYSTEM) this.types.set(n, scalar(n));
+    this.types.set("Пусто", EMPTY); // особняком — вырожденный домен (см. spec)
   }
 
   // ── объявление типов ──
@@ -107,6 +125,8 @@ export class Env {
         if (!same(this.infer(te.pred, ctx), BOOL)) throw new TypeErr("ограничение подтипа должно быть Булево");
         return { kind: "Sub", name, base: b, pred: te.pred };
       }
+      case "TUnion":
+        return { kind: "Uni", members: te.members.map((m) => this.resolve(m)) };
     }
   }
 
@@ -193,7 +213,7 @@ export class Env {
       case "Num": return NUM;
       case "Bool": return BOOL;
       case "Str": return STR;
-      case "Null": return NOTHING;
+      case "Null": return EMPTY;
       case "Regex": return { kind: "Rel", elem: STR };
       case "Underscore": {
         const t = ctx["_"];
@@ -215,9 +235,7 @@ export class Env {
         return { kind: "Tup", fields: e.fields.map(([fn, v]) => [fn, this.infer(v, ctx)]), entity: false };
       case "RelLit": {
         if (e.elems.length === 0) throw new TypeErr("пустой литерал-отношение требует тега");
-        const ets = e.elems.map((x) => this.infer(x, ctx));
-        for (const et of ets.slice(1)) if (!same(et, ets[0])) throw new TypeErr("разнотипные элементы отношения");
-        return { kind: "Rel", elem: ets[0] };
+        return { kind: "Rel", elem: unionOf(e.elems.map((x) => this.infer(x, ctx))) };
       }
       case "UnOp": {
         const xt = this.infer(e.operand, ctx);
@@ -299,6 +317,16 @@ export class Env {
 
   // ── проверка ЗНАЧЕНИЯ против ожидаемого типа (вкл. ограничения) ──
   checkValue(node: N.Expr, expected: SemType): void {
+    // Объединение: значение допустимо, если подходит хотя бы под один член
+    // (сами члены несут свои ограничения); внешний подтип проверяется после.
+    const re = root(expected);
+    if (re.kind === "Uni") {
+      for (const m of re.members) {
+        try { this.checkValue(node, m); this.evalConstraints(expected, node); return; }
+        catch (e) { if (!(e instanceof TypeErr)) throw e; }
+      }
+      throw new TypeErr("значение не подходит ни под один член объединения");
+    }
     if (node.kind === "ScalarSel" || node.kind === "TupleSel" || node.kind === "RelSel"
         || node.kind === "RefSel" || node.kind === "Apply") {
       if (!same(this.infer(node, {}), expected)) throw new TypeErr("тип селектора не совпадает с ожидаемым");
@@ -425,6 +453,7 @@ function scalarLitOk(s: Scalar, node: N.Expr): boolean {
     case "Число": return node.kind === "Num";
     case "Строка": return node.kind === "Str";
     case "Булево": return node.kind === "Bool";
+    case "Пусто": return node.kind === "Null";
     case "Дата":
     case "Время":
     case "UUID": return node.kind === "Str";
@@ -439,5 +468,6 @@ function show(t: SemType): string {
     case "Rel": return `[${show(t.elem)}]`;
     case "RefT": return `#${t.target}`;
     case "Tup": return "{" + (t.entity ? "#, " : "") + t.fields.map(([fn, ft]) => `${fn}: ${show(ft)}`).join(", ") + "}";
+    case "Uni": return t.members.map(show).join(" | ");
   }
 }

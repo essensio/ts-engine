@@ -35,9 +35,13 @@ import {
 } from "@essensio/engine";
 
 const env = new Env();
-env.declare("Положительное = Число | _ > 0");
+env.declare("Положительное = Число & _ > 0");   // подтип: база "&" предикат
 env.checkLiteralAs("5", "Положительное");   // ок
 env.checkLiteralAs("-2", "Положительное");  // TypeErr: нарушение ограничения
+
+// объединение (union) "|" — значение одного из членов; необязательность = T | Пусто
+env.declare("Отметка = Дата | Пусто");
+env.checkLiteralAs("null", "Отметка");                 // ок (Пусто — домен null)
 
 // сущность (#) и запрос (реляционная алгебра σ · π · μ)
 env.declare("Сотрудник = {#, имя: Строка, зарплата: Число}");
@@ -50,7 +54,7 @@ isName("Заказ");  // true   ·   isName("order-id");  // false
 ```
 
 Ошибки — `LexError` · `ParseError` · `TypeErr`. Семантические типы — `SemType`
-(`Scalar` · `Sub` · `Tup` · `Rel` · `RefT`).
+(`Scalar` · `Sub` · `Tup` · `Rel` · `RefT` · `Uni`).
 
 ## Рекомендации по использованию
 

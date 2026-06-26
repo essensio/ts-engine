@@ -12,11 +12,11 @@ const BOOL = { kind: "Scalar", name: "Булево" };
 
 function makeEnv(): Env {
   const env = new Env();
-  env.declare("Положительное = Число | _ > 0");
-  env.declare("Количество = Число | _ >= 1");
+  env.declare("Положительное = Число & _ > 0");
+  env.declare("Количество = Число & _ >= 1");
   env.declare("Точка = {x: Число, y: Число}");
-  env.declare("Прямоугольник = {ширина: Число, высота: Число} | ширина >= высота");
-  env.declare('Категория = Строка | _ ~ ["грузчик", "кассир"]');
+  env.declare("Прямоугольник = {ширина: Число, высота: Число} & ширина >= высота");
+  env.declare('Категория = Строка & _ ~ ["грузчик", "кассир"]');
   env.declare("Заказ = {объект: Строка, количество: Количество}");
   env.declare("Заказы = Заказ[]");
   env.declare("Клиент = {имя: Строка, заказ: #Заказ}");
@@ -27,7 +27,7 @@ function makeEnv(): Env {
 
 describe("объявления", () => {
   test("ограничение обязано быть Булево", () => {
-    assert.throws(() => makeEnv().declare("Bad = Число | _ + 1"), TypeErr);
+    assert.throws(() => makeEnv().declare("Bad = Число & _ + 1"), TypeErr);
   });
 
   test("неизвестный тип в объявлении", () => {
@@ -83,7 +83,7 @@ describe("литералы: допустимость значения", () => {
 
   test("ограничение длины строки (len)", () => {
     const env = makeEnv();
-    env.declare("Имя = Строка | len(_) >= 1 and len(_) <= 3");
+    env.declare("Имя = Строка & len(_) >= 1 and len(_) <= 3");
     env.checkLiteralAs('"ab"', "Имя"); // длина 1..3 — ок
     assert.throws(() => env.checkLiteralAs('""', "Имя"), TypeErr); // пусто
     assert.throws(() => env.checkLiteralAs('"abcd"', "Имя"), TypeErr); // длинно
@@ -179,5 +179,46 @@ describe("запросы: допустимость", () => {
 
   test("под-запрос как источник — ок", () => {
     makeEnv().checkQuery("?(?Сотрудник[зарплата > 0]).(имя)");
+  });
+});
+
+describe("Пусто и объединение", () => {
+  test("Пусто — системный домен; null допустим", () => {
+    assert.equal(makeEnv().checkLiteralAs("null", "Пусто").kind, "Scalar");
+  });
+
+  test("null недопустим под Число", () => {
+    assert.throws(() => makeEnv().checkLiteralAs("null", "Число"), TypeErr);
+  });
+
+  test("Пусто не подставляется в арифметику", () => {
+    assert.throws(() => makeEnv().checkExpr("_ + 1", { _: "Пусто" }), TypeErr);
+  });
+
+  test("равенство с null — Булево", () => {
+    makeEnv().checkExpr("_ = null", { _: "Пусто" }, "Булево");
+  });
+
+  test("union: значение любого члена допустимо, чужого — нет", () => {
+    const env = makeEnv();
+    env.declare("ЧислоИлиСтрока = Число | Строка");
+    env.checkLiteralAs("5", "ЧислоИлиСтрока");
+    env.checkLiteralAs('"x"', "ЧислоИлиСтрока");
+    assert.throws(() => env.checkLiteralAs("true", "ЧислоИлиСтрока"), TypeErr);
+  });
+
+  test("необязательность T | Пусто", () => {
+    const env = makeEnv();
+    env.declare("Отметка = Дата | Пусто");
+    env.checkLiteralAs("null", "Отметка");
+    env.checkLiteralAs('"2024-04-23"', "Отметка");
+    assert.throws(() => env.checkLiteralAs("5", "Отметка"), TypeErr);
+  });
+
+  test("разнотипное отношение-литерал → union элемента", () => {
+    assert.deepStrictEqual(makeEnv().checkLiteral('[1, "a"]'), {
+      kind: "Rel",
+      elem: { kind: "Uni", members: [{ kind: "Scalar", name: "Число" }, { kind: "Scalar", name: "Строка" }] },
+    });
   });
 });

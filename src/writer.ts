@@ -15,7 +15,8 @@
 //   * Строка/регэксп: экранируются \ и " (как ждёт scanString лексера).
 //   * Ключ кортежа печатается голым именем, если это валидное `имя` и не ключевое
 //     слово; иначе строкой ("order-id", "true", "1x") — так держится round-trip.
-//   * Кортеж-сущность (entity) печатается с ведущим "#," ({#, поле: T}).
+//   * Кортеж-сущность (entity) печатается с ведущим "#" ({#, поле: T}; без полей — {#});
+//     пустой кортеж-значение — {}. Тип-объединение — "A | B"; подтип — "база & предикат".
 //   * Число печатается своим текстом (Num.text уже валиден, в т.ч. экспонента).
 //   * Выражения: скобки минимальны, по той же иерархии приоритетов, что в парсере
 //     (or < and < not < сравнение < + − < * / < унарный − < постфикс «.» < атом);
@@ -109,19 +110,32 @@ export function writeType(t: N.TypeExpr): string {
     case "TName": return t.name;
     case "TRef": return "#" + t.target;
     case "TRel": return atomType(t.elem) + "[]";
-    case "TTuple": return "{" + (t.entity ? "#, " : "") + t.fields.map(([k, ft]) => key(k) + ": " + atomType(ft)).join(", ") + "}";
-    case "TConstraint": return writeType(t.base) + " | " + writeExpression(t.pred);
+    case "TTuple": {
+      const inner = t.fields.map(([k, ft]) => key(k) + ": " + atomType(ft)).join(", ");
+      if (t.entity) return inner ? "{#, " + inner + "}" : "{#}";
+      return "{" + inner + "}";
+    }
+    case "TConstraint": return atomType(t.base) + " & " + writeExpression(t.pred);
+    case "TUnion": return t.members.map(unionMember).join(" | ");
   }
+}
+
+// Член объединения: вложенный union скобкуем (плоскую запись `A | B | C` парсер
+// собирает обратно одним TUnion). TConstraint-член (`A & p`) пишется без скобок —
+// "&" крепче "|", поэтому `A & p | B` парсится как `(A & p) | B`.
+function unionMember(t: N.TypeExpr): string {
+  return t.kind === "TUnion" ? "(" + writeType(t) + ")" : writeType(t);
 }
 
 export function writeDecl(d: N.Decl): string {
   return d.name + " = " + writeType(d.type);
 }
 
-// Тип в позиции, где верхний конструктор-ограничение «|» требует скобок: элемент
-// отношения (`(Число | _ > 0)[]`) и тип поля кортежа (`{цена: (Число | _ > 0)}`).
+// Тип в позиции, где верхний конструктор «&» (подтип) или «|» (объединение) требует
+// скобок: элемент отношения (`(Число & _ > 0)[]`, `(Число | Строка)[]`), тип поля
+// кортежа (`{цена: (Число & _ > 0)}`) и база ограничения (`(A | B) & p`).
 function atomType(t: N.TypeExpr): string {
-  return t.kind === "TConstraint" ? "(" + writeType(t) + ")" : writeType(t);
+  return t.kind === "TConstraint" || t.kind === "TUnion" ? "(" + writeType(t) + ")" : writeType(t);
 }
 
 // ───────────────────────────── Запрос ─────────────────────────────
