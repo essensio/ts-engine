@@ -39,6 +39,30 @@ export type RefT = { kind: "RefT"; target: string };
 export type Uni = { kind: "Uni"; members: SemType[] };
 export type SemType = Scalar | Sub | Tup | Rel | RefT | Uni;
 
+export type SemTypeCases<R> = {
+  Scalar: (t: Scalar) => R;
+  Sub: (t: Sub) => R;
+  Tup: (t: Tup) => R;
+  Rel: (t: Rel) => R;
+  RefT: (t: RefT) => R;
+  Uni: (t: Uni) => R;
+};
+
+// Разбор семантического типа по конструктору с исчерпываемостью by construction:
+// единственный switch по виду; потребитель передаёт обработчик на каждый вид и
+// получает узкий вариант (рекурсию ведёт сам, где нужна). Добавится вид SemType —
+// перестанут компилироваться и эта свёртка, и каждое её место вызова.
+export function foldSemType<R>(t: SemType, on: SemTypeCases<R>): R {
+  switch (t.kind) {
+    case "Scalar": return on.Scalar(t);
+    case "Sub": return on.Sub(t);
+    case "Tup": return on.Tup(t);
+    case "Rel": return on.Rel(t);
+    case "RefT": return on.RefT(t);
+    case "Uni": return on.Uni(t);
+  }
+}
+
 const scalar = (name: string): Scalar => ({ kind: "Scalar", name });
 // Системные домены — в порядке спеки (Строка — корень и цель сериализации — первой).
 const SYSTEM = ["Строка", "Число", "Булево", "Дата", "Время", "UUID"];

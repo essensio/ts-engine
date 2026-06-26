@@ -12,5 +12,5 @@ export type { Token } from "./lexer";
 export * as nodes from "./nodes";
 export { parseDeclaration, parseType, parseLiteral, parseExpression, parseQuery, ParseError } from "./parser";
 export { writeLiteral, writeExpression, writeType, writeDecl, writeQuery, WriteError } from "./writer";
-export { Env, TypeErr, root, same } from "./checker";
-export type { SemType, Scalar, Sub, Tup, Rel, RefT, Uni } from "./checker";
+export { Env, TypeErr, root, same, foldSemType } from "./checker";
+export type { SemType, Scalar, Sub, Tup, Rel, RefT, Uni, SemTypeCases } from "./checker";
