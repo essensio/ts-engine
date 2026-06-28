@@ -11,6 +11,10 @@
 //   (разобрать(записать(v)) = v из spec/notation.md), теперь для всех пяти
 //   входов парсера, а не только литералов.
 //
+// КАК  обход семейства узлов ведут свёртки nodes (foldExpr/foldType/foldQueryStep):
+//   плита «какие виды узлов есть» в одном месте, здесь — лишь алгебра «как печатать
+//   каждый вид». Контекст печати (требуемый приоритет) — носитель R = (min) => string.
+//
 // ПРАВИЛА
 //   * Строка/регэксп: экранируются \ и " (как ждёт scanString лексера).
 //   * Ключ кортежа печатается голым именем, если это валидное `имя` и не ключевое
@@ -32,21 +36,35 @@ export class WriteError extends Error {}
 const KEYWORDS = new Set(["true", "false", "null", "and", "or", "not"]);
 const NAME = /^\p{L}[\p{L}\p{N}_]*$/u;
 
+// ───────────────────────────── Литералы ─────────────────────────────
+
+// Литеральные виды печатают, выраженческие (Ref/Member/Apply/BinOp/UnOp/Underscore)
+// кидают WriteError. Один обработчик notLiteral годится на все шесть (принимает
+// общий Expr, возвращает never — подставим в любой узкий слот).
+const notLiteral = (e: N.Expr): never => { throw new WriteError(`не литерал: ${e.kind}`); };
+
+const literal: N.ExprCases<string> = {
+  Num: (e) => e.text,
+  Bool: (e) => (e.value ? "true" : "false"),
+  Null: () => "null",
+  Str: (e) => quote(e.value),
+  Regex: (e) => "r" + quote(e.pattern),
+  TupleLit: (e) => "{" + e.fields.map(([k, v]) => key(k) + ": " + N.foldExpr(v, literal)).join(", ") + "}",
+  RelLit: (e) => "[" + e.elems.map((x) => N.foldExpr(x, literal)).join(", ") + "]",
+  ScalarSel: (e) => e.name + "(" + N.foldExpr(e.arg, literal) + ")",
+  RefSel: (e) => "#" + e.target + "(" + N.foldExpr(e.arg, literal) + ")",
+  TupleSel: (e) => e.name + N.foldExpr(e.value, literal),
+  RelSel: (e) => e.name + N.foldExpr(e.value, literal),
+  Underscore: notLiteral,
+  Ref: notLiteral,
+  Member: notLiteral,
+  Apply: notLiteral,
+  BinOp: notLiteral,
+  UnOp: notLiteral,
+};
+
 export function writeLiteral(e: N.Expr): string {
-  switch (e.kind) {
-    case "Num": return e.text;
-    case "Bool": return e.value ? "true" : "false";
-    case "Null": return "null";
-    case "Str": return quote(e.value);
-    case "Regex": return "r" + quote(e.pattern);
-    case "TupleLit": return "{" + e.fields.map(([k, v]) => key(k) + ": " + writeLiteral(v)).join(", ") + "}";
-    case "RelLit": return "[" + e.elems.map(writeLiteral).join(", ") + "]";
-    case "ScalarSel": return e.name + "(" + writeLiteral(e.arg) + ")";
-    case "RefSel": return "#" + e.target + "(" + writeLiteral(e.arg) + ")";
-    case "TupleSel": return e.name + writeLiteral(e.value);
-    case "RelSel": return e.name + writeLiteral(e.value);
-    default: throw new WriteError(`не литерал: ${e.kind}`);
-  }
+  return N.foldExpr(e, literal);
 }
 
 function key(k: string): string {
@@ -59,65 +77,73 @@ function quote(s: string): string {
 
 // ───────────────────────────── Выражения ─────────────────────────────
 
+// Носитель: функция требуемого контекстом приоритета → текст. Каждый обработчик
+// печатает свой узел и сам скобкует, если его приоритет ниже требуемого (paren);
+// рекурсия в детей задаёт нужный им приоритет (как expr(child, min) прежде).
+type Out = (min: number) => string;
+const ATOM = 9; // приоритет атома: литералы, Ref, Apply, Underscore, селекторы
+
+function paren(p: number, s: string, min: number): string {
+  return p < min ? "(" + s + ")" : s;
+}
+
+// Уровень приоритета бинарного оператора (выше — крепче связывает), как в парсере.
+function precBin(op: string): number {
+  switch (op) {
+    case "or": return 1;
+    case "and": return 2;
+    case "=": case "!=": case "<": case ">": case "<=": case ">=": case "~": return 4;
+    case "+": case "-": return 5;
+    case "*": case "/": return 6;
+    default: return ATOM;
+  }
+}
+
+// Атом-литерал печатается через writeLiteral и в скобки не берётся (приоритет ATOM
+// не ниже любого требуемого). Годится на все литеральные/селекторные виды.
+const asAtom = (e: N.Expr): Out => () => writeLiteral(e);
+
+const expression: N.ExprCases<Out> = {
+  Num: asAtom, Bool: asAtom, Str: asAtom, Null: asAtom, Regex: asAtom,
+  TupleLit: asAtom, RelLit: asAtom, ScalarSel: asAtom, RefSel: asAtom, TupleSel: asAtom, RelSel: asAtom,
+  Underscore: () => () => "_",
+  Ref: (e) => () => e.name,
+  Member: (e) => (min) => paren(8, N.foldExpr(e.obj, expression)(8) + "." + e.field, min),
+  Apply: (e) => (min) => paren(ATOM, e.name + "(" + e.args.map((a) => N.foldExpr(a, expression)(0)).join(", ") + ")", min),
+  UnOp: (e) => (min) => {
+    const p = e.op === "not" ? 3 : 7;
+    const s = e.op === "not" ? "not " + N.foldExpr(e.operand, expression)(3) : "-" + N.foldExpr(e.operand, expression)(7);
+    return paren(p, s, min);
+  },
+  BinOp: (e) => (min) => {
+    const p = precBin(e.op);
+    const leftMin = p === 4 ? p + 1 : p; // сравнение не цепляется → левый тоже крепче
+    const s = N.foldExpr(e.left, expression)(leftMin) + " " + e.op + " " + N.foldExpr(e.right, expression)(p + 1);
+    return paren(p, s, min);
+  },
+};
+
 export function writeExpression(e: N.Expr): string {
-  return expr(e, 0);
-}
-
-// Уровень приоритета узла (выше — крепче связывает), как в иерархии парсера.
-function prec(e: N.Expr): number {
-  switch (e.kind) {
-    case "BinOp":
-      switch (e.op) {
-        case "or": return 1;
-        case "and": return 2;
-        case "=": case "!=": case "<": case ">": case "<=": case ">=": case "~": return 4;
-        case "+": case "-": return 5;
-        case "*": case "/": return 6;
-        default: return 9;
-      }
-    case "UnOp": return e.op === "not" ? 3 : 7;
-    case "Member": return 8;
-    default: return 9; // атомы: литералы, Ref, Apply, Underscore, селекторы
-  }
-}
-
-// Печатает e и скобкует, если его приоритет ниже требуемого контекстом.
-function expr(e: N.Expr, min: number): string {
-  const s = render(e);
-  return prec(e) < min ? "(" + s + ")" : s;
-}
-
-function render(e: N.Expr): string {
-  switch (e.kind) {
-    case "Underscore": return "_";
-    case "Ref": return e.name;
-    case "Member": return expr(e.obj, 8) + "." + e.field;
-    case "Apply": return e.name + "(" + e.args.map((a) => expr(a, 0)).join(", ") + ")";
-    case "UnOp": return e.op === "not" ? "not " + expr(e.operand, 3) : "-" + expr(e.operand, 7);
-    case "BinOp": {
-      const p = prec(e);
-      const leftMin = p === 4 ? p + 1 : p; // сравнение не цепляется → левый тоже крепче
-      return expr(e.left, leftMin) + " " + e.op + " " + expr(e.right, p + 1);
-    }
-    default: return writeLiteral(e); // Num/Bool/Str/Null/Regex/TupleLit/RelLit/селекторы
-  }
+  return N.foldExpr(e, expression)(0);
 }
 
 // ─────────────────────────── Типы и объявления ───────────────────────────
 
+const type: N.TypeCases<string> = {
+  TName: (t) => t.name,
+  TRef: (t) => "#" + t.target,
+  TRel: (t) => atomType(t.elem) + "[]",
+  TTuple: (t) => {
+    const inner = t.fields.map(([k, ft]) => key(k) + ": " + atomType(ft)).join(", ");
+    if (t.entity) return inner ? "{#, " + inner + "}" : "{#}";
+    return "{" + inner + "}";
+  },
+  TConstraint: (t) => atomType(t.base) + " & " + writeExpression(t.pred),
+  TUnion: (t) => t.members.map(unionMember).join(" | "),
+};
+
 export function writeType(t: N.TypeExpr): string {
-  switch (t.kind) {
-    case "TName": return t.name;
-    case "TRef": return "#" + t.target;
-    case "TRel": return atomType(t.elem) + "[]";
-    case "TTuple": {
-      const inner = t.fields.map(([k, ft]) => key(k) + ": " + atomType(ft)).join(", ");
-      if (t.entity) return inner ? "{#, " + inner + "}" : "{#}";
-      return "{" + inner + "}";
-    }
-    case "TConstraint": return atomType(t.base) + " & " + writeExpression(t.pred);
-    case "TUnion": return t.members.map(unionMember).join(" | ");
-  }
+  return N.foldType(t, type);
 }
 
 // Член объединения: вложенный union скобкуем (плоскую запись `A | B | C` парсер
@@ -133,22 +159,21 @@ export function writeDecl(d: N.Decl): string {
 
 // Тип в позиции, где верхний конструктор «&» (подтип) или «|» (объединение) требует
 // скобок: элемент отношения (`(Число & _ > 0)[]`, `(Число | Строка)[]`), тип поля
-// кортежа (`{цена: (Число & _ > 0)}`) и база ограничения (`(A | B) & p`).
+// кортежа (`{цена: (Число & _ > 0)}`) и база ограничения (`(A | B) & p`). Скобки
+// решает родитель по виду ребёнка (прямой доступ к узлу), затем рекурсия writeType.
 function atomType(t: N.TypeExpr): string {
   return t.kind === "TConstraint" || t.kind === "TUnion" ? "(" + writeType(t) + ")" : writeType(t);
 }
 
 // ───────────────────────────── Запрос ─────────────────────────────
 
+const queryStep: N.QueryStepCases<string> = {
+  Select: (s) => "[" + writeExpression(s.pred) + "]",
+  Project: (s) => ".(" + s.fields.join(", ") + ")",
+  Unnest: (s) => "." + s.field,
+};
+
 export function writeQuery(q: N.Query): string {
   const src = typeof q.source === "string" ? q.source : "(" + writeQuery(q.source) + ")";
-  return "?" + src + q.steps.map(step).join("");
-}
-
-function step(s: N.QueryStep): string {
-  switch (s.kind) {
-    case "Select": return "[" + writeExpression(s.pred) + "]";
-    case "Project": return ".(" + s.fields.join(", ") + ")";
-    case "Unnest": return "." + s.field;
-  }
+  return "?" + src + q.steps.map((s) => N.foldQueryStep(s, queryStep)).join("");
 }

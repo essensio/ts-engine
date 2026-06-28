@@ -10,6 +10,8 @@
 export { tokenize, isName, LexError } from "./lexer";
 export type { Token } from "./lexer";
 export * as nodes from "./nodes";
+export { foldExpr } from "./nodes";
+export type { ExprCases } from "./nodes";
 export { parseDeclaration, parseType, parseLiteral, parseExpression, parseQuery, ParseError } from "./parser";
 export { writeLiteral, writeExpression, writeType, writeDecl, writeQuery, WriteError } from "./writer";
 export { Env, TypeErr, root, same, foldSemType } from "./checker";

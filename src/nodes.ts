@@ -87,3 +87,62 @@ export const Select = (pred: Expr): Select => ({ kind: "Select", pred });
 export const Project = (fields: string[]): Project => ({ kind: "Project", fields });
 export const Unnest = (field: string): Unnest => ({ kind: "Unnest", field });
 export const Query = (source: string | Query, steps: QueryStep[]): Query => ({ kind: "Query", source, steps });
+
+// ───────────────────────── свёртки по виду узла ─────────────────────────
+//
+// Разбор узла по конструктору с исчерпываемостью by construction (по образцу
+// foldSemType): запись «обработчик на КАЖДЫЙ вид», единственный switch по `kind`,
+// рекурсию в детей ведёт сам обработчик (foldExpr(child, on)). Добавится вид в
+// union — перестанут компилироваться и свёртка, и каждая её алгебра. Контекст
+// потребителя (приоритет печати, режим разбора) ловится носителем R = (ctx) => Out;
+// вид ребёнка виден прямым доступом к узлу в обработчике.
+//
+// Экспортируется только foldExpr (его потребляет cli); foldType/foldQueryStep —
+// внутренние, их зовёт writer (узкая поверхность: API не шире нужды).
+
+export type ExprCases<R> = { [K in Expr["kind"]]: (e: Extract<Expr, { kind: K }>) => R };
+
+export function foldExpr<R>(e: Expr, on: ExprCases<R>): R {
+  switch (e.kind) {
+    case "Num": return on.Num(e);
+    case "Bool": return on.Bool(e);
+    case "Str": return on.Str(e);
+    case "Null": return on.Null(e);
+    case "Regex": return on.Regex(e);
+    case "TupleLit": return on.TupleLit(e);
+    case "RelLit": return on.RelLit(e);
+    case "ScalarSel": return on.ScalarSel(e);
+    case "RefSel": return on.RefSel(e);
+    case "TupleSel": return on.TupleSel(e);
+    case "RelSel": return on.RelSel(e);
+    case "Underscore": return on.Underscore(e);
+    case "Ref": return on.Ref(e);
+    case "Member": return on.Member(e);
+    case "Apply": return on.Apply(e);
+    case "BinOp": return on.BinOp(e);
+    case "UnOp": return on.UnOp(e);
+  }
+}
+
+export type TypeCases<R> = { [K in TypeExpr["kind"]]: (t: Extract<TypeExpr, { kind: K }>) => R };
+
+export function foldType<R>(t: TypeExpr, on: TypeCases<R>): R {
+  switch (t.kind) {
+    case "TName": return on.TName(t);
+    case "TTuple": return on.TTuple(t);
+    case "TRel": return on.TRel(t);
+    case "TRef": return on.TRef(t);
+    case "TConstraint": return on.TConstraint(t);
+    case "TUnion": return on.TUnion(t);
+  }
+}
+
+export type QueryStepCases<R> = { [K in QueryStep["kind"]]: (s: Extract<QueryStep, { kind: K }>) => R };
+
+export function foldQueryStep<R>(s: QueryStep, on: QueryStepCases<R>): R {
+  switch (s.kind) {
+    case "Select": return on.Select(s);
+    case "Project": return on.Project(s);
+    case "Unnest": return on.Unnest(s);
+  }
+}
